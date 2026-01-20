@@ -77,7 +77,7 @@ class SoundBoardApp(ctk.CTk):
         super().__init__()
 
         self.title("Soundboard Windows")
-        self.geometry("900x700")
+        self.geometry("1100x700")
 
         # Obtenir le dossier de données de l'application
         self.app_data_dir = get_app_data_dir()
