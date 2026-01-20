@@ -129,8 +129,7 @@ class SoundBoardApp(ctk.CTk):
         self.entry_tts_text = ctk.CTkEntry(self.footer_frame, placeholder_text="Texte à dire...", width=300)
         self.entry_tts_text.pack(side="left", padx=5)
 
-        self.entry_tts_name = ctk.CTkEntry(self.footer_frame, placeholder_text="Nom (optionnel)", width=150)
-        self.entry_tts_name.pack(side="left", padx=5)
+
 
         self.btn_tts_play = ctk.CTkButton(self.footer_frame, text="▶ Jouer Direct", fg_color="green", hover_color="darkgreen", command=self.on_tts_play_direct)
         self.btn_tts_play.pack(side="left", padx=5)

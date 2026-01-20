@@ -4,6 +4,6 @@
         "quentin1": "sounds\\quentin1.mp3",
         "quentin le caca...": "sounds\\quentin_le_caca....mp3"
     },
-    "device_id": 11,
-    "monitoring": true
+    "device_id": 6,
+    "monitoring": false
 }
