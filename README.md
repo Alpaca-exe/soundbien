@@ -1,4 +1,4 @@
-# Soundboard Alpaca 🦙🔊
+# Soundbien 🦙🔊
 
 Une Soundboard moderne pour Windows développée en Python. Elle permet de jouer des sons vers un périphérique virtuel (comme VB-Cable) tout en les écoutant via un périphérique de monitoring (votre casque).
 
@@ -71,4 +71,4 @@ python main.py
 - `config.json` : Sauvegarde de vos paramètres et liste de sons.
 
 ---
-*Créé avec ❤️ par l'équipe Alpaca.*
+Alpaca
