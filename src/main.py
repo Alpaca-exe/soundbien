@@ -5,9 +5,8 @@ import threading
 from tkinter import messagebox, StringVar
 from pathlib import Path
 
-# Add src to path when running directly
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Add parent directory to path for imports (works both in dev and PyInstaller)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sound_manager import SoundManager
 from downloader import Downloader
