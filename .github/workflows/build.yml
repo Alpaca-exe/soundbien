@@ -35,7 +35,8 @@ jobs:
           $Range = "HEAD"
         }
         
-        git log --pretty=format:"- [%h](https://github.com/${{ github.repository }}/commit/%H) %s" $Range > RELEASE_NOTES.md
+        $changelog = git log --pretty=format:"- [%h](https://github.com/${{ github.repository }}/commit/%H) %s" $Range
+        [System.IO.File]::WriteAllText("RELEASE_NOTES.md", $changelog, [System.Text.Encoding]::UTF8)
       shell: powershell
 
     - name: Set up Python
