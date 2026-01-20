@@ -2,8 +2,9 @@ import customtkinter as ctk
 import os
 import sys
 import threading
-from tkinter import messagebox, StringVar
+from tkinter import messagebox, StringVar, filedialog
 from pathlib import Path
+import shutil
 
 # Add parent directory to path for imports (works both in dev and PyInstaller)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -101,8 +102,11 @@ class SoundBoardApp(ctk.CTk):
         self.header_frame = ctk.CTkFrame(self)
         self.header_frame.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
 
-        self.btn_add = ctk.CTkButton(self.header_frame, text="+ Ajouter Youtube", command=self.open_add_dialog)
-        self.btn_add.pack(side="left", padx=10)
+        self.btn_add_youtube = ctk.CTkButton(self.header_frame, text="+ Ajouter Youtube", command=self.open_add_dialog)
+        self.btn_add_youtube.pack(side="left", padx=5)
+        
+        self.btn_add_file = ctk.CTkButton(self.header_frame, text="+ Ajouter Fichier", command=self.open_file_import, fg_color="#2b825b", hover_color="#1f5d42")
+        self.btn_add_file.pack(side="left", padx=5)
 
         self.btn_stop = ctk.CTkButton(self.header_frame, text="STOP TOUT", fg_color="red", hover_color="darkred", command=self.sound_manager.stop_sound)
         self.btn_stop.pack(side="left", padx=10)
@@ -183,6 +187,36 @@ class SoundBoardApp(ctk.CTk):
         self.sound_manager.save_config()
 
 
+    def open_file_import(self):
+        """Ouvre un dialogue pour importer un fichier audio local"""
+        filetypes = [
+            ("Fichiers Audio", "*.mp3 *.wav *.ogg *.m4a *.flac"),
+            ("Tous les fichiers", "*.*")
+        ]
+        
+        filepath = filedialog.askopenfilename(
+            title="Sélectionner un fichier audio",
+            filetypes=filetypes
+        )
+        
+        if filepath:
+            # Demander un nom pour le son
+            from tkinter import simpledialog
+            name = simpledialog.askstring("Nom du son", "Entrez un nom pour ce son:", parent=self)
+            
+            if name:
+                try:
+                    # Copier le fichier dans le dossier sounds
+                    source = Path(filepath)
+                    dest = self.app_data_dir / "sounds" / f"{name.replace(' ', '_')}{source.suffix}"
+                    shutil.copy2(source, dest)
+                    
+                    # Ajouter à la liste
+                    self.on_sound_added(name, str(dest))
+                    messagebox.showinfo("Succès", f"Le son '{name}' a été ajouté !")
+                except Exception as e:
+                    messagebox.showerror("Erreur", f"Impossible d'importer le fichier:\n{e}")
+    
     def open_add_dialog(self):
         dialog = AddSoundDialog(self, self.on_sound_added, self.downloader)
         dialog.grab_set()
