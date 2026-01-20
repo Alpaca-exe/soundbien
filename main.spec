@@ -1,11 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+import customtkinter
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\Alpaca\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\customtkinter', 'customtkinter')],
+    datas=[(customtkinter.get_package_path(), 'customtkinter')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
