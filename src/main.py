@@ -1,11 +1,20 @@
 import customtkinter as ctk
 import os
+import sys
 import threading
 from tkinter import messagebox, StringVar
 from pathlib import Path
+
+# Add src to path when running directly
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from sound_manager import SoundManager
 from downloader import Downloader
 from tts_generator import TTSGenerator
+from updater import Updater
+import src
+__version__ = src.__version__
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -79,6 +88,10 @@ class SoundBoardApp(ctk.CTk):
         self.sound_manager = SoundManager(config_file=str(config_path))
         self.downloader = Downloader(download_path=str(sounds_dir))
         self.tts_generator = TTSGenerator(output_dir=str(sounds_dir))
+        
+        # Vérifier les mises à jour en arrière-plan
+        self.updater = Updater()
+        threading.Thread(target=self._check_updates, daemon=True).start()
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -235,6 +248,25 @@ class SoundBoardApp(ctk.CTk):
         if messagebox.askyesno("Supprimer", f"Voulez-vous supprimer le son '{name}' ?"):
             self.sound_manager.remove_sound(name)
             self.refresh_sounds()
+
+    def _check_updates(self):
+        """Vérifie les mises à jour en arrière-plan"""
+        try:
+            if self.updater.check_for_updates():
+                info = self.updater.get_update_info()
+                self.after(0, lambda: self._show_update_notification(info))
+        except Exception as e:
+            print(f"Erreur lors de la vérification des MAJ: {e}")
+    
+    def _show_update_notification(self, info):
+        """Affiche la notification de mise à jour"""
+        msg = f"Une nouvelle version est disponible !\n\n"
+        msg += f"Version actuelle : v{info['current']}\n"
+        msg += f"Nouvelle version : v{info['latest']}\n\n"
+        msg += "Voulez-vous ouvrir la page de téléchargement ?"
+        
+        if messagebox.askyesno("Mise à jour disponible", msg, icon='info'):
+            self.updater.open_release_page()
 
 if __name__ == "__main__":
     app = SoundBoardApp()

@@ -20,11 +20,11 @@ DisableProgramGroupPage=yes
 LicenseFile=LICENSE
 OutputDir=installer_output
 OutputBaseFilename=soundbien-setup
-SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
+SetupIconFile=assets\icon.ico
 ; Moderne look
 WizardImageFile=compiler:WizModernImage-IS.bmp
 WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp

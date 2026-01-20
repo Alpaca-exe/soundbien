@@ -3,7 +3,7 @@ import os
 
 
 a = Analysis(
-    ['main.py'],
+    ['src\\main.py'],
     pathex=[],
     binaries=[],
     datas=[(os.path.dirname(customtkinter.__file__), 'customtkinter')],
