@@ -35,7 +35,40 @@ jobs:
           $Range = "HEAD"
         }
         
-        git log --pretty=format:"- [%h](https://github.com/${{ github.repository }}/commit/%H) %s" $Range | Out-File -FilePath RELEASE_NOTES.md -Encoding utf8
+        # Récupérer les logs bruts
+        $logs = git log --pretty=format:"%h|%s" $Range
+        
+        $features = @()
+        $fixes = @()
+        $others = @()
+        
+        foreach ($line in $logs) {
+            $parts = $line -split "\|", 2
+            $hash = $parts[0]
+            $msg = $parts[1]
+            $link = "[`$hash`](https://github.com/${{ github.repository }}/commit/$hash)"
+            
+            if ($msg -match "^feat:|^feat\(") {
+                $features += "- $link $msg"
+            } elseif ($msg -match "^fix:|^fix\(") {
+                $fixes += "- $link $msg"
+            } else {
+                $others += "- $link $msg"
+            }
+        }
+        
+        $md = ""
+        if ($features.Count -gt 0) {
+            $md += "## ✨ Features`n" + ($features -join "`n") + "`n`n"
+        }
+        if ($fixes.Count -gt 0) {
+            $md += "## 🐛 Bug Fixes`n" + ($fixes -join "`n") + "`n`n"
+        }
+        if ($others.Count -gt 0) {
+            $md += "## 🔧 Autres changements`n" + ($others -join "`n") + "`n"
+        }
+        
+        $md | Out-File -FilePath RELEASE_NOTES.md -Encoding utf8
       shell: powershell
 
     - name: Set up Python
