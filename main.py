@@ -3,7 +3,6 @@ import os
 import threading
 from tkinter import messagebox, StringVar
 from sound_manager import SoundManager
-from sound_manager import SoundManager
 from downloader import Downloader
 from tts_generator import TTSGenerator
 
@@ -49,10 +48,10 @@ class AddSoundDialog(ctk.CTkToplevel):
     def _download_thread(self, url, name):
         downloader = Downloader()
         # Nettoyer le nom pour le fichier
-        params_downloader = downloader.download_sound(url, name.replace(" ", "_"))
+        download_path = downloader.download_sound(url, name.replace(" ", "_"))
         
-        if params_downloader:
-            self.after(0, lambda: self.callback(name, params_downloader))
+        if download_path:
+            self.after(0, lambda: self.callback(name, download_path))
             self.after(0, self.destroy)
         else:
             self.after(0, lambda: messagebox.showerror("Erreur", "Échec du téléchargement"))
@@ -129,8 +128,6 @@ class SoundBoardApp(ctk.CTk):
         self.entry_tts_text = ctk.CTkEntry(self.footer_frame, placeholder_text="Texte à dire...", width=300)
         self.entry_tts_text.pack(side="left", padx=5)
 
-
-
         self.btn_tts_play = ctk.CTkButton(self.footer_frame, text="▶ Jouer Direct", fg_color="green", hover_color="darkgreen", command=self.on_tts_play_direct)
         self.btn_tts_play.pack(side="left", padx=5)
 
@@ -139,7 +136,6 @@ class SoundBoardApp(ctk.CTk):
         for d in self.devices:
             if d['name'] == choice:
                 self.sound_manager.set_device(d['id'])
-                print(f"Périphérique changé pour: {choice} (ID: {d['id']})")
                 print(f"Périphérique changé pour: {choice} (ID: {d['id']})")
                 break
 

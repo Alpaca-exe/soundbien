@@ -11,7 +11,6 @@ class SoundManager:
         self.current_device = None
         self.load_config()
         self.playing_thread = None
-        self.playing_thread = None
         self.stop_event = threading.Event()
         self.monitoring = False
 
