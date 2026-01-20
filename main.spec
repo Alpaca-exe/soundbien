@@ -1,12 +1,12 @@
-# -*- mode: python ; coding: utf-8 -*-
 import customtkinter
+import os
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[(customtkinter.get_package_path(), 'customtkinter')],
+    datas=[(os.path.dirname(customtkinter.__file__), 'customtkinter')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
