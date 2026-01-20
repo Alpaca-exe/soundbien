@@ -32,3 +32,4 @@ venv/
 # Soundboard specific
 sounds/
 soundboardalpaca.code-workspace
+release.bat
