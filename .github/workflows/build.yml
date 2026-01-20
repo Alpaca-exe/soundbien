@@ -15,6 +15,28 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Generate Changelog
+      run: |
+        $ErrorActionPreference = 'Stop'
+        try {
+          $PreviousTag = git describe --tags --abbrev=0 HEAD^
+          Write-Host "Previous tag: $PreviousTag"
+        } catch {
+          Write-Host "No previous tag found, showing all history"
+          $PreviousTag = $null
+        }
+
+        if ($PreviousTag) {
+          $Range = "$PreviousTag..HEAD"
+        } else {
+          $Range = "HEAD"
+        }
+        
+        git log --pretty=format:"- [%h](https://github.com/${{ github.repository }}/commit/%H) %s" $Range > RELEASE_NOTES.md
+      shell: powershell
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -42,6 +64,6 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: dist/soundbien.exe
-        generate_release_notes: true
+        body_path: RELEASE_NOTES.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
