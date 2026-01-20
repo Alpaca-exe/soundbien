@@ -4,7 +4,7 @@ import os
 
 a = Analysis(
     ['src\\main.py'],
-    pathex=[],
+    pathex=['src'],
     binaries=[],
     datas=[(os.path.dirname(customtkinter.__file__), 'customtkinter')],
     hiddenimports=[],
