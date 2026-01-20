@@ -24,11 +24,20 @@ Elle intègre également un téléchargeur YouTube et un générateur de voix (T
 
 ## 📦 Installation
 
-### Option 1 : Exécutable (Recommandé)
-Téléchargez simplement la dernière version (`.exe`) depuis la page des releases :
-👉 **[Dernière Release](https://github.com/Alpaca-exe/soundbien/releases/latest)**
+### Option 1 : Installateur Windows (Recommandé)
+Téléchargez et exécutez l'installateur depuis la page des releases :
+👉 **[Dernière Release](https://github.com/Alpaca-exe/soundbien/releases/latest)** - `soundbien-setup.exe`
 
-### Option 2 : Depuis les sources (Pour les développeurs)
+L'installateur :
+- Installe l'application dans `Program Files`
+- Crée un raccourci sur le bureau
+- Ajoute une entrée dans le menu Démarrer
+- Permet une désinstallation propre
+
+### Option 2 : Version Portable
+Téléchargez simplement `soundbien.exe` depuis les releases si vous préférez une version sans installation.
+
+### Option 3 : Depuis les sources (Pour les développeurs)
 
 1. Clonez ce dépôt ou téléchargez les fichiers.
 2. Ouvrez un terminal dans le dossier du projet.
@@ -63,12 +72,19 @@ python main.py
 
 ## 📂 Structure du projet
 
+### Code Source
 - `main.py` : Point d'entrée et interface graphique.
 - `sound_manager.py` : Gestion de la lecture audio et des périphériques.
 - `downloader.py` : Logique de téléchargement YouTube (via `yt-dlp`).
 - `tts_generator.py` : Logique de génération de voix (via `gTTS`).
+- `installer.iss` : Script Inno Setup pour créer l'installateur Windows.
+
+### Données Utilisateur
+L'application stocke ses données dans `C:\Users\[Votre Nom]\Documents\Soundbien\` :
 - `sounds/` : Dossier contenant vos fichiers `.mp3`.
 - `config.json` : Sauvegarde de vos paramètres et liste de sons.
 
+> **Note** : Les données sont séparées du code pour faciliter les mises à jour et la portabilité.
+
 ---
-Alpaca
+Made with ❤️ by Alpaca

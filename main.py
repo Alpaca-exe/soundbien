@@ -2,6 +2,7 @@ import customtkinter as ctk
 import os
 import threading
 from tkinter import messagebox, StringVar
+from pathlib import Path
 from sound_manager import SoundManager
 from downloader import Downloader
 from tts_generator import TTSGenerator
@@ -9,10 +10,18 @@ from tts_generator import TTSGenerator
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
+def get_app_data_dir():
+    """Retourne le chemin vers le dossier de données de l'application dans Documents."""
+    # Utiliser Path.home() pour obtenir le dossier utilisateur
+    user_docs = Path.home() / "Documents" / "Soundbien"
+    user_docs.mkdir(parents=True, exist_ok=True)
+    return user_docs
+
 class AddSoundDialog(ctk.CTkToplevel):
-    def __init__(self, parent, callback):
+    def __init__(self, parent, callback, downloader):
         super().__init__(parent)
         self.callback = callback
+        self.downloader = downloader
         self.title("Ajouter un son")
         self.geometry("400x200")
         
@@ -46,9 +55,8 @@ class AddSoundDialog(ctk.CTkToplevel):
         threading.Thread(target=self._download_thread, args=(url, name)).start()
 
     def _download_thread(self, url, name):
-        downloader = Downloader()
         # Nettoyer le nom pour le fichier
-        download_path = downloader.download_sound(url, name.replace(" ", "_"))
+        download_path = self.downloader.download_sound(url, name.replace(" ", "_"))
         
         if download_path:
             self.after(0, lambda: self.callback(name, download_path))
@@ -62,7 +70,15 @@ class SoundBoardApp(ctk.CTk):
         self.title("Soundboard Windows")
         self.geometry("900x700")
 
-        self.sound_manager = SoundManager()
+        # Obtenir le dossier de données de l'application
+        self.app_data_dir = get_app_data_dir()
+        config_path = self.app_data_dir / "config.json"
+        sounds_dir = self.app_data_dir / "sounds"
+        sounds_dir.mkdir(exist_ok=True)
+
+        self.sound_manager = SoundManager(config_file=str(config_path))
+        self.downloader = Downloader(download_path=str(sounds_dir))
+        self.tts_generator = TTSGenerator(output_dir=str(sounds_dir))
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -156,13 +172,12 @@ class SoundBoardApp(ctk.CTk):
 
 
     def open_add_dialog(self):
-        dialog = AddSoundDialog(self, self.on_sound_added)
+        dialog = AddSoundDialog(self, self.on_sound_added, self.downloader)
         dialog.grab_set()
 
     def _generate_tts_thread(self, text, name):
-        generator = TTSGenerator()
         # Si direct play, on utilise un nom temporaire ou fixe
-        path = generator.generate(text, name)
+        path = self.tts_generator.generate(text, name)
         
         if path:
             # Lecture directe

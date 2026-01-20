@@ -53,17 +53,35 @@ jobs:
     - name: Build with PyInstaller
       run: pyinstaller main.spec
 
-    - name: Upload Artifact
+    - name: Install Inno Setup
+      run: |
+        choco install innosetup -y
+      shell: powershell
+
+    - name: Build Installer
+      run: |
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+      shell: powershell
+
+    - name: Upload Exe Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: SoundboardApp
+        name: SoundboardApp-Exe
         path: dist/soundbien.exe
+
+    - name: Upload Installer Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SoundboardApp-Setup
+        path: installer_output/soundbien-setup.exe
 
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: dist/soundbien.exe
+        files: |
+          dist/soundbien.exe
+          installer_output/soundbien-setup.exe
         body_path: RELEASE_NOTES.md
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
