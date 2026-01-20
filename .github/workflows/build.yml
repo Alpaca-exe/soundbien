@@ -35,7 +35,7 @@ jobs:
           $Range = "HEAD"
         }
         
-        $changelog = git log --pretty=format:"- [%h](https://github.com/${{ github.repository }}/commit/%H) %s" $Range
+        $changelog = git log --pretty=format:"- [%h](https://github.com/${{ github.repository }}/commit/%H) %s%n" $Range
         [System.IO.File]::WriteAllText("RELEASE_NOTES.md", $changelog, [System.Text.Encoding]::UTF8)
       shell: powershell
 
