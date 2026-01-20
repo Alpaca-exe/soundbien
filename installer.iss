@@ -25,9 +25,6 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 SetupIconFile=assets\icon.ico
-; Moderne look
-WizardImageFile=compiler:WizModernImage-IS.bmp
-WizardSmallImageFile=compiler:WizModernSmallImage-IS.bmp
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
