@@ -13,6 +13,7 @@ from sound_manager import SoundManager
 from downloader import Downloader
 from tts_generator import TTSGenerator
 from updater import Updater
+from audio_trimmer import AudioTrimDialog
 import src
 __version__ = src.__version__
 
@@ -68,10 +69,19 @@ class AddSoundDialog(ctk.CTkToplevel):
         download_path = self.downloader.download_sound(url, name.replace(" ", "_"))
         
         if download_path:
-            self.after(0, lambda: self.callback(name, download_path))
+            # Ouvrir le dialog de trimming
+            self.after(0, lambda: self._open_trimmer(name, download_path))
             self.after(0, self.destroy)
         else:
             self.after(0, lambda: messagebox.showerror("Erreur", "Échec du téléchargement"))
+    
+    def _open_trimmer(self, name, path):
+        """Ouvre le dialog de trimming après téléchargement"""
+        def on_trim_complete(trimmed_path):
+            self.callback(name, trimmed_path)
+        
+        trimmer = AudioTrimDialog(self.master, path, on_trim_complete)
+        trimmer.grab_set()
 class SoundBoardApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -211,9 +221,14 @@ class SoundBoardApp(ctk.CTk):
                     dest = self.app_data_dir / "sounds" / f"{name.replace(' ', '_')}{source.suffix}"
                     shutil.copy2(source, dest)
                     
-                    # Ajouter à la liste
-                    self.on_sound_added(name, str(dest))
-                    messagebox.showinfo("Succès", f"Le son '{name}' a été ajouté !")
+                    # Ouvrir le trimmer
+                    def on_trim_complete(trimmed_path):
+                        self.on_sound_added(name, trimmed_path)
+                        messagebox.showinfo("Succès", f"Le son '{name}' a été ajouté !")
+                    
+                    trimmer = AudioTrimDialog(self, str(dest), on_trim_complete)
+                    trimmer.grab_set()
+                    
                 except Exception as e:
                     messagebox.showerror("Erreur", f"Impossible d'importer le fichier:\n{e}")
     
