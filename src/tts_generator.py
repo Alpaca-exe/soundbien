@@ -1,4 +1,4 @@
-from gtts import gTTS
+
 import os
 
 class TTSGenerator:
@@ -16,6 +16,7 @@ class TTSGenerator:
             filename = name.replace(" ", "_") + ".mp3"
             filepath = os.path.join(self.output_dir, filename)
             
+            from gtts import gTTS
             tts = gTTS(text=text, lang=lang)
             tts.save(filepath)
             

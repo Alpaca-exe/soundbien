@@ -1,37 +1,63 @@
-import sounddevice as sd
-import soundfile as sf
 import threading
 import json
 import os
+import keyboard
+
+# Constantes
+MAX_CACHE_SIZE = 50  # Limite du cache audio pour éviter surconsommation mémoire
 
 class SoundManager:
     def __init__(self, config_file="config.json"):
         self.config_file = config_file
         self.sounds = {}
         self.current_device = None
-        self.load_config()
+        self.monitoring = False
+        
+        # Volumes (0.0 à 1.0)
+        self.vol_output = 1.0
+        self.vol_monitoring = 1.0
+        
+        # Optimisation
+        self.audio_cache = {} # path -> (data, fs)
+        self.current_play_id = 0
+        self.lock = threading.Lock()
+        self.fade_out = False  # Flag pour fade out progressif
+        
+        # Keybinds (touche -> nom du son)
+        self.keybinds = {}  # Ex: {'f1': 'mon_son', '1': 'autre_son'}
+        self.stop_key = None  # Touche pour arrêter tout
+        
         self.playing_thread = None
         self.stop_event = threading.Event()
-        self.monitoring = False
+        
+        # Charger la config (APRÈS l'initialisation des variables)
+        self.load_config()
+        
+        # Démarrer le listener global
+        self._start_global_listener()
 
-    def get_devices(self):
-        """Retourne la liste des périphériques de sortie disponibles (MME uniquement pour éviter doublons)."""
-        devices = sd.query_devices()
-        output_devices = []
-        seen_names = set()
-        for i, device in enumerate(devices):
-            # Filtrer pour ne garder que MME (hostapi=0) et les sorties
-            if device['max_output_channels'] > 0 and device['hostapi'] == 0:
-                name = device['name']
-                if name not in seen_names:
-                    output_devices.append({'id': i, 'name': name})
-                    seen_names.add(name)
-        return output_devices
+    def _start_global_listener(self):
+        """Démarre l'écoute globale du clavier"""
+        try:
+            keyboard.hook(self._on_global_key)
+        except Exception as e:
+            print(f"Erreur init clavier global: {e}")
 
-    def set_device(self, device_id):
-        """Définit le périphérique de sortie actif."""
-        self.current_device = device_id
-        self.save_config()
+    def _on_global_key(self, event):
+        """Callback appelé à chaque événement clavier global"""
+        if event.event_type == keyboard.KEY_DOWN:
+            key = event.name
+            
+            # Stop ?
+            if self.stop_key and key == self.stop_key:
+                self.stop_sound()
+                return
+
+            # Sound ?
+            if key in self.keybinds:
+                sound_name = self.keybinds[key]
+                if sound_name in self.sounds:
+                    self.play_sound(sound_name)
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -41,6 +67,10 @@ class SoundManager:
                     self.sounds = data.get('sounds', {})
                     self.current_device = data.get('device_id', None)
                     self.monitoring = data.get('monitoring', False)
+                    self.vol_output = data.get('vol_output', 1.0)
+                    self.vol_monitoring = data.get('vol_monitoring', 1.0)
+                    self.keybinds = data.get('keybinds', {})
+                    self.stop_key = data.get('stop_key', None)
             except Exception as e:
                 print(f"Erreur chargement config: {e}")
                 self.sounds = {}
@@ -49,19 +79,104 @@ class SoundManager:
         data = {
             'sounds': self.sounds,
             'device_id': self.current_device,
-            'monitoring': self.monitoring
+            'monitoring': self.monitoring,
+            'vol_output': self.vol_output,
+            'vol_monitoring': self.vol_monitoring,
+            'keybinds': self.keybinds,
+            'stop_key': self.stop_key
         }
         with open(self.config_file, 'w') as f:
             json.dump(data, f, indent=4)
 
+    def set_volume_output(self, vol):
+        """Définit le volume de sortie (0.0 à 1.0)"""
+        self.vol_output = max(0.0, min(1.0, float(vol)))
+        self.save_config()
+        
+    def set_volume_monitoring(self, vol):
+        """Définit le volume de monitoring (0.0 à 1.0)"""
+        self.vol_monitoring = max(0.0, min(1.0, float(vol)))
+        self.save_config()
+
+    def get_devices(self):
+        """Retourne la liste des périphériques de sortie disponibles (MME uniquement pour éviter doublons)."""
+        import sounddevice as sd
+        try:
+            devices = sd.query_devices()
+            output_devices = []
+            seen_names = set()
+            for i, device in enumerate(devices):
+                # Filtrer pour ne garder que MME (hostapi=0) et les sorties
+                if device['max_output_channels'] > 0 and device['hostapi'] == 0:
+                    name = device['name']
+                    if name not in seen_names:
+                        output_devices.append({'id': i, 'name': name})
+                        seen_names.add(name)
+            return output_devices
+        except Exception as e:
+            print(f"Erreur get_devices: {e}")
+            return []
+
+    def set_device(self, device_id):
+        """Définit le périphérique de sortie actif."""
+        self.current_device = device_id
+        self.save_config()
+
     def add_sound(self, name, path):
+        """Ajoute un son à la bibliothèque"""
         self.sounds[name] = path
         self.save_config()
 
     def remove_sound(self, name):
+        """Supprime un son de la bibliothèque et du cache"""
         if name in self.sounds:
+            # Nettoyer le cache
+            path = self.sounds[name]
+            if path in self.audio_cache:
+                del self.audio_cache[path]
+            # Nettoyer le keybind si existant
+            for key, sound_name in list(self.keybinds.items()):
+                if sound_name == name:
+                    del self.keybinds[key]
             del self.sounds[name]
             self.save_config()
+    
+    def set_keybind(self, key, sound_name):
+        """Assigne une touche à un son"""
+        # 1. Nettoyer l'ancien keybind pour ce son (un son = une touche max)
+        for k, v in list(self.keybinds.items()):
+            if v == sound_name:
+                del self.keybinds[k]
+                
+        # 2. Supprimer l'ancien binding de la NOUVELLE touche si elle était prise
+        if key in self.keybinds:
+            del self.keybinds[key]
+            
+        # 3. Assigner
+        if sound_name:  # Si None, on supprime juste (déjà fait étape 1)
+            self.keybinds[key] = sound_name
+            
+        self.save_config()
+    
+    def get_sound_key(self, sound_name):
+        """Retourne la touche assignée à un son (ou None)"""
+        for key, name in self.keybinds.items():
+            if name == sound_name:
+                return key
+        return None
+    
+    def set_stop_key(self, key):
+        """Définit la touche pour arrêter"""
+        self.stop_key = key
+        self.save_config()
+    
+    def _cleanup_cache(self):
+        """Nettoie le cache si trop volumineux (FIFO)"""
+        if len(self.audio_cache) > MAX_CACHE_SIZE:
+            # Supprimer les entrées les plus anciennes
+            oldest_keys = list(self.audio_cache.keys())[:len(self.audio_cache) - MAX_CACHE_SIZE]
+            for key in oldest_keys:
+                del self.audio_cache[key]
 
     def play_sound(self, name):
         if name not in self.sounds:
@@ -76,20 +191,41 @@ class SoundManager:
             print(f"Fichier '{path}' introuvable.")
             return
 
-        # Arrêter le son précédent si nécessaire
-        self.stop_sound()
+        # Play ID system: Incrémenter l'ID pour invalider les anciens threads
+        with self.lock:
+            self.current_play_id += 1
+            play_id = self.current_play_id
         
+        # Reset stop event pour autoriser la lecture
         self.stop_event.clear()
-        self.playing_thread = threading.Thread(target=self._play_thread, args=(path,))
+        
+        # Pas de .join() ici -> Non bloquant pour le spam !
+        self.playing_thread = threading.Thread(target=self._play_thread, args=(path, play_id))
         self.playing_thread.start()
 
     def set_monitoring(self, enabled):
         """Active ou désactive le monitoring (écouter le son joué)."""
         self.monitoring = enabled
+        self.save_config()
 
-    def _play_thread(self, path):
+    def _play_thread(self, path, play_id):
+        """Thread de lecture audio avec gestion du volume et fade-out"""
+        # Réinitialiser le flag fade pour ce nouveau thread
+        self.fade_out = False
+        
         try:
-            data, fs = sf.read(path, dtype='float32')
+            import sounddevice as sd
+            import soundfile as sf
+            import numpy as np
+            
+            # 1. Vérifier le cache ou charger
+            if path in self.audio_cache:
+                data, fs = self.audio_cache[path]
+            else:
+                data, fs = sf.read(path, dtype='float32')
+                self.audio_cache[path] = (data, fs)
+                # Nettoyer le cache si trop volumineux
+                self._cleanup_cache()
             
             # Périphérique principal (ex: Cable)
             device_out = self.current_device if self.current_device is not None else sd.default.device[1]
@@ -102,20 +238,18 @@ class SoundManager:
             mon_stream = None
 
             try:
-                # 1. Stream Principal
+                # Création des streams
                 try:
-                    main_stream = sd.OutputStream(samplerate=fs, device=device_out, channels=data.shape[1] if len(data.shape) > 1 else 1)
+                    channels = data.shape[1] if len(data.shape) > 1 else 1
+                    main_stream = sd.OutputStream(samplerate=fs, device=device_out, channels=channels)
                     main_stream.start()
                     streams.append(main_stream)
                 except Exception as e:
                     print(f"Erreur main stream: {e}")
 
-                # 2. Stream Monitoring (Toujours le créer si différent du main, pour permettre le toggle)
-                # On vérifie si c'est le même device par ID ou Nom, pour éviter l'écho doublé si Main == Default
-                # (Simplification: comparer les IDs si disponibles, mais ici on assume que l'utilisateur a choisi CABLE donc différent)
                 if device_out != device_mon:
                     try:
-                        mon_stream = sd.OutputStream(samplerate=fs, device=device_mon, channels=data.shape[1] if len(data.shape) > 1 else 1)
+                        mon_stream = sd.OutputStream(samplerate=fs, device=device_mon, channels=channels)
                         mon_stream.start()
                         streams.append(mon_stream)
                     except Exception as e:
@@ -125,26 +259,42 @@ class SoundManager:
                 block_size = 1024
                 position = 0
                 
-                # Zéros pré-calculés pour l'efficacité (une seule allocation si possible, mais taille variable dernier bloc)
-                # On fera data[pos:end] * 0
-                
-                while position < len(data) and not self.stop_event.is_set():
+                # Boucle de lecture optimisée
+                fade_factor = 1.0
+                while position < len(data):
+                    # Check rapide si on doit arrêter (spam ou stop button)
+                    stopping = self.stop_event.is_set() or self.current_play_id != play_id
+                    
+                    if stopping:
+                        if self.fade_out:
+                            fade_factor = max(0, fade_factor - 0.10) # Un peu plus doux pour éviter le POP
+                        else:
+                            fade_factor = 0
+                        
                     end = min(position + block_size, len(data))
                     chunk = data[position:end]
                     
                     # Écriture Main
                     if main_stream:
-                        main_stream.write(chunk)
+                        # Appliquer volume sortie + fade si actif
+                        # On écrit MÊME si fade_factor est 0 pour nettoyer le buffer
+                        main_stream.write(chunk * self.vol_output * fade_factor)
                     
                     # Écriture Monitoring
                     if mon_stream:
                         if self.monitoring:
-                            mon_stream.write(chunk)
+                            mon_stream.write(chunk * self.vol_monitoring * fade_factor)
                         else:
-                            # Silence (garder la synchro)
                             mon_stream.write(chunk * 0)
+                            
+                    # Si on est en arrêt et qu'on a atteint le silence, on coupe
+                    if stopping and fade_factor == 0:
+                        # Petite pause pour laisser le buffer se vider
+                        sd.sleep(10)
+                        break
                     
                     position = end
+
 
             finally:
                 for s in streams:
@@ -155,6 +305,9 @@ class SoundManager:
             print(f"Erreur lecture audio: {e}")
 
     def stop_sound(self):
-        if self.playing_thread and self.playing_thread.is_alive():
-            self.stop_event.set()
-            self.playing_thread.join()
+        """Arrête avec un fade out doux"""
+        self.fade_out = True
+        self.stop_event.set()
+        # Invalider aussi l'ID courant pour être sûr
+        with self.lock:
+            self.current_play_id += 1

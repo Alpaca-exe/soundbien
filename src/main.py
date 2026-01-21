@@ -1,21 +1,47 @@
-import customtkinter as ctk
+"""
+Soundbien - Application de Soundboard Windows
+Permet de jouer des sons depuis YouTube, fichiers locaux, ou TTS sur des périphériques audio virtuels.
+"""
+
 import os
 import sys
+
+# === DPI Awareness pour Windows ===
+# Fixe le problème de décalage curseur/slider sur les écrans avec scaling (125%, 150%, etc.)
+if sys.platform == 'win32':
+    try:
+        import ctypes
+        # Méthode moderne (Windows 8.1+)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # 2 = PROCESS_PER_MONITOR_DPI_AWARE
+    except Exception:
+        try:
+            # Méthode legacy (Windows Vista+)
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass  # Pas grave si ça échoue, on continue sans
+
+import customtkinter as ctk
 import threading
-from tkinter import messagebox, StringVar, filedialog
+from tkinter import messagebox, StringVar, filedialog, simpledialog
 from pathlib import Path
 import shutil
 
-# Add parent directory to path for imports (works both in dev and PyInstaller)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Ensure we can import modules from the same directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
 from sound_manager import SoundManager
 from downloader import Downloader
 from tts_generator import TTSGenerator
 from updater import Updater
-from audio_trimmer import AudioTrimDialog
-import src
-__version__ = src.__version__
+from utils import center_window
+
+# Version info
+try:
+    from __init__ import __version__
+except ImportError:
+    __version__ = "1.0.0"
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -32,62 +58,53 @@ class AddSoundDialog(ctk.CTkToplevel):
         super().__init__(parent)
         self.callback = callback
         self.downloader = downloader
-        self.title("Ajouter un son")
-        self.geometry("400x200")
+        self.title("Ajouter un son depuis YouTube")
+        center_window(self, 400, 180, parent)
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         self.lbl_url = ctk.CTkLabel(self, text="URL YouTube:")
         self.lbl_url.pack(pady=5)
-        self.entry_url = ctk.CTkEntry(self, width=300)
+        self.entry_url = ctk.CTkEntry(self, width=300, placeholder_text="https://youtube.com/watch?v=...")
         self.entry_url.pack(pady=5)
-
-        self.lbl_name = ctk.CTkLabel(self, text="Nom du son:")
-        self.lbl_name.pack(pady=5)
-        self.entry_name = ctk.CTkEntry(self, width=300)
-        self.entry_name.pack(pady=5)
+        
+        self.lbl_info = ctk.CTkLabel(self, text="Le nom sera automatiquement extrait de la vidéo", 
+                                      font=("Arial", 9), text_color="#888")
+        self.lbl_info.pack(pady=5)
 
         self.btn_download = ctk.CTkButton(self, text="Télécharger", command=self.on_download)
         self.btn_download.pack(pady=20)
 
     def on_download(self):
-        url = self.entry_url.get()
-        name = self.entry_name.get()
+        url = self.entry_url.get().strip()
         
-        if not url or not name:
-            messagebox.showwarning("Erreur", "Veuillez remplir tous les champs")
+        if not url:
+            messagebox.showwarning("Erreur", "Veuillez entrer une URL YouTube")
             return
 
         self.btn_download.configure(state="disabled", text="Téléchargement en cours...")
         
         # Thread pour ne pas bloquer l'UI
-        threading.Thread(target=self._download_thread, args=(url, name)).start()
+        threading.Thread(target=self._download_thread, args=(url,), daemon=True).start()
 
-    def _download_thread(self, url, name):
-        # Nettoyer le nom pour le fichier
-        download_path = self.downloader.download_sound(url, name.replace(" ", "_"))
+    def _download_thread(self, url):
+        # Télécharger et récupérer le titre automatiquement
+        download_path, title = self.downloader.download_sound(url)
         
-        if download_path:
-            # Ouvrir le dialog de trimming
-            self.after(0, lambda: self._open_trimmer(name, download_path))
+        if download_path and title:
+            # Fermer d'abord, puis callback avec le titre extrait
             self.after(0, self.destroy)
+            self.after(100, lambda: self.callback(title, download_path))
         else:
             self.after(0, lambda: messagebox.showerror("Erreur", "Échec du téléchargement"))
-    
-    def _open_trimmer(self, name, path):
-        """Ouvre le dialog de trimming après téléchargement"""
-        def on_trim_complete(trimmed_path):
-            self.callback(name, trimmed_path)
-        
-        trimmer = AudioTrimDialog(self.master, path, on_trim_complete)
-        trimmer.grab_set()
+            self.after(0, lambda: self.btn_download.configure(state="normal", text="Télécharger"))
 class SoundBoardApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("Soundboard Windows")
-        self.geometry("1100x700")
+        center_window(self, 1100, 700)
 
         # Obtenir le dossier de données de l'application
         self.app_data_dir = get_app_data_dir()
@@ -101,7 +118,12 @@ class SoundBoardApp(ctk.CTk):
         
         # Vérifier les mises à jour en arrière-plan
         self.updater = Updater()
-        threading.Thread(target=self._check_updates, daemon=True).start()
+        
+        # Uniquement en version EXE pour éviter rate limit GitHub en dev
+        if getattr(sys, 'frozen', False):
+            threading.Thread(target=self._check_updates, daemon=True).start()
+        else:
+            print("Mode dev: Thread auto-update désactivé.")
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -120,17 +142,22 @@ class SoundBoardApp(ctk.CTk):
 
         self.btn_stop = ctk.CTkButton(self.header_frame, text="STOP TOUT", fg_color="red", hover_color="darkred", command=self.sound_manager.stop_sound)
         self.btn_stop.pack(side="left", padx=10)
+        # Context menu pour la touche STOP
+        self.btn_stop.bind("<Button-3>", self.show_stop_context_menu)
+        self._update_stop_button_text()
 
         # Device Selector
         self.device_var = StringVar(value="Périphérique par défaut")
-        self.devices = self.sound_manager.get_devices()
-        self.device_names = [d['name'] for d in self.devices]
+        self.devices = [] 
+        self.device_names = ["Chargement..."]
         
         self.lbl_device = ctk.CTkLabel(self.header_frame, text="Sortie Audio:")
         self.lbl_device.pack(side="left", padx=(20, 5))
         
         self.combo_device = ctk.CTkComboBox(self.header_frame, values=self.device_names, command=self.change_device, width=250)
         self.combo_device.pack(side="left", padx=5)
+        self.combo_device.set("Chargement...")
+        self.combo_device.configure(state="disabled") # Désactiver pendant chargement
 
         self.btn_refresh = ctk.CTkButton(self.header_frame, text="↻", width=30, command=self.refresh_devices)
         self.btn_refresh.pack(side="left", padx=5)
@@ -138,21 +165,13 @@ class SoundBoardApp(ctk.CTk):
         self.switch_monitoring = ctk.CTkSwitch(self.header_frame, text="Monitoring", command=self.toggle_monitoring)
         self.switch_monitoring.pack(side="right", padx=10)
         
+        # Charger les devices en background
+        threading.Thread(target=self._load_devices_async, daemon=True).start()
+        
         # Charger l'état du monitoring depuis la config
         if self.sound_manager.monitoring:
             self.switch_monitoring.select()
         
-        # Sélectionner le device actuel s'il existe
-        current_id = self.sound_manager.current_device
-        if current_id is not None:
-            for d in self.devices:
-                if d['id'] == current_id:
-                    self.combo_device.set(d['name'])
-                    break
-        else:
-             self.combo_device.set("Choisir périphérique (ex: CABLE Input)")
-
-
         # --- Sound Grid ---
         self.scrollable_frame = ctk.CTkScrollableFrame(self, label_text="Mes Sons")
         self.scrollable_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
@@ -173,6 +192,72 @@ class SoundBoardApp(ctk.CTk):
         self.btn_tts_play = ctk.CTkButton(self.footer_frame, text="▶ Jouer Direct", fg_color="green", hover_color="darkgreen", command=self.on_tts_play_direct)
         self.btn_tts_play.pack(side="left", padx=5)
 
+        # --- Footer (TTS Generator) ---
+        self.footer_frame = ctk.CTkFrame(self)
+        self.footer_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
+
+        self.lbl_tts = ctk.CTkLabel(self.footer_frame, text="TTS Rapide :", font=("Arial", 12, "bold"))
+        self.lbl_tts.pack(side="left", padx=10)
+
+        self.entry_tts_text = ctk.CTkEntry(self.footer_frame, placeholder_text="Texte à dire...", width=300)
+        self.entry_tts_text.pack(side="left", padx=5)
+
+        self.btn_tts_play = ctk.CTkButton(self.footer_frame, text="▶ Jouer Direct", fg_color="green", hover_color="darkgreen", command=self.on_tts_play_direct)
+        self.btn_tts_play.pack(side="left", padx=5)
+
+        # Volume Controls (Custom sliders sans bug)
+        from volume_slider import VolumeSlider
+        
+        self.vol_frame = ctk.CTkFrame(self.footer_frame, fg_color="transparent")
+        self.vol_frame.pack(side="right", padx=10)
+
+        # Output Vol
+        self.lbl_vol_out = ctk.CTkLabel(self.vol_frame, text="Sortie 📢", font=("Arial", 10))
+        self.lbl_vol_out.grid(row=0, column=0, padx=5)
+        self.slider_vol_out = VolumeSlider(self.vol_frame, 
+                                           initial_value=self.sound_manager.vol_output,
+                                           callback=self.on_vol_out_change)
+        self.slider_vol_out.grid(row=1, column=0, padx=5)
+
+        # Monitoring Vol
+        self.lbl_vol_mon = ctk.CTkLabel(self.vol_frame, text="Moi 🎧", font=("Arial", 10))
+        self.lbl_vol_mon.grid(row=0, column=1, padx=5)
+        self.slider_vol_mon = VolumeSlider(self.vol_frame,
+                                           initial_value=self.sound_manager.vol_monitoring,
+                                           callback=self.on_vol_mon_change)
+        self.slider_vol_mon.grid(row=1, column=1, padx=5)
+
+        self.slider_vol_mon = VolumeSlider(self.vol_frame,
+                                           initial_value=self.sound_manager.vol_monitoring,
+                                           callback=self.on_vol_mon_change)
+        self.slider_vol_mon.grid(row=1, column=1, padx=5)
+
+        # Note: on n'utilise plus self.bind('<KeyPress>') car le SoundManager
+        # gère tout via keyboard.hook pour le global hotkey 
+
+
+    def _load_devices_async(self):
+        """Charge les périphériques en background"""
+        devices = self.sound_manager.get_devices()
+        self.after(0, lambda: self._update_devices_ui(devices))
+
+    def _update_devices_ui(self, devices):
+        self.devices = devices
+        self.device_names = [d['name'] for d in self.devices]
+        self.combo_device.configure(values=self.device_names, state="normal")
+        
+        # Sélectionner le device actuel s'il existe
+        current_id = self.sound_manager.current_device
+        found = False
+        if current_id is not None:
+            for d in self.devices:
+                if d['id'] == current_id:
+                    self.combo_device.set(d['name'])
+                    found = True
+                    break
+        
+        if not found:
+             self.combo_device.set("Choisir périphérique (ex: CABLE Input)")
 
     def change_device(self, choice):
         for d in self.devices:
@@ -182,13 +267,9 @@ class SoundBoardApp(ctk.CTk):
                 break
 
     def refresh_devices(self):
-        self.devices = self.sound_manager.get_devices()
-        self.device_names = [d['name'] for d in self.devices]
-        self.combo_device.configure(values=self.device_names)
-        
-        current = self.combo_device.get()
-        if current not in self.device_names:
-             self.combo_device.set("Choisir périphérique")
+        self.combo_device.set("Actualisation...")
+        self.combo_device.configure(state="disabled")
+        threading.Thread(target=self._load_devices_async, daemon=True).start()
 
     def toggle_monitoring(self):
         enabled = self.switch_monitoring.get()
@@ -196,6 +277,82 @@ class SoundBoardApp(ctk.CTk):
         # Sauvegarder la préférence
         self.sound_manager.save_config()
 
+    def _update_stop_button_text(self):
+        """Met à jour le texte du bouton STOP avec la touche assignée"""
+        key = self.sound_manager.stop_key
+        text = f"STOP TOUT [{key}]" if key else "STOP TOUT"
+        self.btn_stop.configure(text=text)
+
+    def show_stop_context_menu(self, event):
+        """Menu contextuel pour le bouton STOP"""
+        import tkinter as tk
+        menu = tk.Menu(self, tearoff=0, bg='#2b2b2b', fg='white',
+                       activebackground='#1f6aa5', activeforeground='white',
+                       font=('Segoe UI', 10))
+        
+        current_key = self.sound_manager.stop_key
+        key_label = f" ({current_key})" if current_key else ""
+        
+        menu.add_command(label=f"⌨️ Assigner touche STOP{key_label}", command=self.assign_stop_key)
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def assign_stop_key(self):
+        """Dialogue pour assigner la touche STOP"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Assigner touche STOP")
+        center_window(dialog, 400, 200, self)
+        dialog.grab_set()
+        
+        lbl = ctk.CTkLabel(dialog, text="Appuyez sur une touche pour STOP\nou Echap pour annuler",
+                          font=("Arial", 12))
+        lbl.pack(pady=30)
+        
+        current_key = self.sound_manager.stop_key
+        if current_key:
+            lbl_current = ctk.CTkLabel(dialog, text=f"Touche actuelle: {current_key}",
+                                      font=("Arial", 10), text_color="#888")
+            lbl_current.pack(pady=5)
+            
+        def wait_for_key():
+            import keyboard
+            while keyboard.is_pressed('enter'): pass
+            event = keyboard.read_event(suppress=True)
+            if event.event_type == keyboard.KEY_DOWN:
+                key = event.name
+                if key == 'esc':
+                    dialog.after(0, dialog.destroy)
+                    return
+                # Assigner
+                self.sound_manager.set_stop_key(key)
+                self.after(0, lambda: [dialog.destroy(), self._update_stop_button_text()])
+
+        threading.Thread(target=wait_for_key, daemon=True).start()
+
+    def on_vol_out_change(self, value):
+        self.sound_manager.set_volume_output(value)
+
+    def on_vol_mon_change(self, value):
+        self.sound_manager.set_volume_monitoring(value)
+
+    def on_vol_mon_change(self, value):
+        self.sound_manager.set_volume_monitoring(value)
+
+    # Note: on_key_press supprimé car géré globablement par SoundManager
+
+
+    def _open_trimmer_dialog(self, name, path):
+        """Ouvre le dialogue de trimming de manière centralisée"""
+        def on_trim_complete(trimmed_path):
+            self.on_sound_added(name, trimmed_path)
+        
+        from audio_trimmer import AudioTrimDialog
+        # Utiliser self comme parent
+        trimmer = AudioTrimDialog(self, str(path), on_trim_complete)
+        trimmer.grab_set()
 
     def open_file_import(self):
         """Ouvre un dialogue pour importer un fichier audio local"""
@@ -210,30 +367,24 @@ class SoundBoardApp(ctk.CTk):
         )
         
         if filepath:
-            # Demander un nom pour le son
-            from tkinter import simpledialog
-            name = simpledialog.askstring("Nom du son", "Entrez un nom pour ce son:", parent=self)
+            # Utiliser le nom du fichier (sans extension) comme nom du son
+            source = Path(filepath)
+            name = source.stem  # Nom sans extension
             
-            if name:
-                try:
-                    # Copier le fichier dans le dossier sounds
-                    source = Path(filepath)
-                    dest = self.app_data_dir / "sounds" / f"{name.replace(' ', '_')}{source.suffix}"
-                    shutil.copy2(source, dest)
-                    
-                    # Ouvrir le trimmer
-                    def on_trim_complete(trimmed_path):
-                        self.on_sound_added(name, trimmed_path)
-                        messagebox.showinfo("Succès", f"Le son '{name}' a été ajouté !")
-                    
-                    trimmer = AudioTrimDialog(self, str(dest), on_trim_complete)
-                    trimmer.grab_set()
-                    
-                except Exception as e:
-                    messagebox.showerror("Erreur", f"Impossible d'importer le fichier:\n{e}")
+            try:
+                # Copier le fichier dans le dossier sounds
+                dest = self.app_data_dir / "sounds" / f"{name.replace(' ', '_')}{source.suffix}"
+                shutil.copy2(source, dest)
+                
+                # Ouvrir le trimmer
+                self._open_trimmer_dialog(name, dest)
+                
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible d'importer le fichier:\n{e}")
     
     def open_add_dialog(self):
-        dialog = AddSoundDialog(self, self.on_sound_added, self.downloader)
+        # Le callback sera appelé avec (name, path) une fois téléchargé
+        dialog = AddSoundDialog(self, self._open_trimmer_dialog, self.downloader)
         dialog.grab_set()
 
     def _generate_tts_thread(self, text, name):
@@ -280,17 +431,106 @@ class SoundBoardApp(ctk.CTk):
         col = 0
         
         for name, path in sounds.items():
-            btn = ctk.CTkButton(self.scrollable_frame, text=name, height=80, 
+            # Afficher la touche assignée si existante
+            key = self.sound_manager.get_sound_key(name)
+            display_name = f"{name} [{key}]" if key else name
+            
+            btn = ctk.CTkButton(self.scrollable_frame, text=display_name, height=80, 
                                 command=lambda n=name: self.sound_manager.play_sound(n))
             btn.grid(row=row, column=col, padx=10, pady=10, sticky="ew")
             
-            # Clic droit pour supprimer (simple hack bind)
-            btn.bind("<Button-3>", lambda event, n=name: self.delete_sound(n))
+            # Clic droit pour menu contextuel
+            btn.bind("<Button-3>", lambda event, n=name, b=btn: self.show_sound_context_menu(event, n, b))
 
             col += 1
             if col > 3:
                 col = 0
                 row += 1
+    
+    def show_sound_context_menu(self, event, name, button):
+        """Affiche le menu contextuel pour un son"""
+        import tkinter as tk
+        
+        menu = tk.Menu(self, tearoff=0, bg='#2b2b2b', fg='white',
+                       activebackground='#1f6aa5', activeforeground='white',
+                       font=('Segoe UI', 10))
+        
+        # Afficher la touche actuelle si définie
+        current_key = self.sound_manager.get_sound_key(name)
+        key_label = f" ({current_key})" if current_key else ""
+        
+        menu.add_command(label=f"⌨️ Assigner une touche{key_label}", command=lambda: self.assign_keybind(name))
+        menu.add_command(label="✏️ Renommer", command=lambda: self.rename_sound(name))
+        menu.add_command(label="🗑️ Supprimer", command=lambda: self.delete_sound(name))
+        
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+    
+    def assign_keybind(self, sound_name):
+        """Dialogue pour assigner une touche à un son"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Assigner une touche")
+        center_window(dialog, 400, 200, self)
+        dialog.grab_set()
+        
+        lbl = ctk.CTkLabel(dialog, text=f"Appuyez sur une touche pour '{sound_name}'\nou Echap pour annuler",
+                          font=("Arial", 12))
+        lbl.pack(pady=30)
+        
+        current_key = self.sound_manager.get_sound_key(sound_name)
+        if current_key:
+            lbl_current = ctk.CTkLabel(dialog, text=f"Touche actuelle: {current_key}",
+                                      font=("Arial", 10), text_color="#888")
+            lbl_current.pack(pady=5)
+        
+        def wait_for_key():
+            import keyboard
+            # Attendre qu'une touche soit relâchée pour éviter capture immédiate
+            while keyboard.is_pressed('enter'):
+                pass
+                
+            event = keyboard.read_event(suppress=True)
+            if event.event_type == keyboard.KEY_DOWN:
+                key = event.name
+                
+                if key == 'esc':
+                    dialog.after(0, dialog.destroy)
+                    return
+                
+                # Assigner la touche
+                self.sound_manager.set_keybind(key, sound_name)
+                # Revenir thread UI pour fermer
+                self.after(0, lambda: [dialog.destroy(), self.refresh_sounds()])
+
+        # Lancer l'écoute dans un thread pour ne pas bloquer l'UI
+        threading.Thread(target=wait_for_key, daemon=True).start()
+        # dialog.focus_set() # Plus besoin de focus widget
+    
+    def rename_sound(self, old_name):
+        """Renomme un son"""
+        new_name = simpledialog.askstring(
+            "Renommer", 
+            f"Nouveau nom pour '{old_name}':",
+            initialvalue=old_name,
+            parent=self
+        )
+        
+        if new_name and new_name != old_name:
+            # Vérifier que le nouveau nom n'existe pas déjà
+            if new_name in self.sound_manager.sounds:
+                messagebox.showerror("Erreur", f"Un son nommé '{new_name}' existe déjà")
+                return
+            
+            # Renommer dans le dictionnaire
+            path = self.sound_manager.sounds[old_name]
+            del self.sound_manager.sounds[old_name]
+            self.sound_manager.sounds[new_name] = path
+            self.sound_manager.save_config()
+            
+            # Rafraîchir l'affichage
+            self.refresh_sounds()
 
     def delete_sound(self, name):
         if messagebox.askyesno("Supprimer", f"Voulez-vous supprimer le son '{name}' ?"):
