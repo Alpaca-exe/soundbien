@@ -547,14 +547,57 @@ class SoundBoardApp(ctk.CTk):
             print(f"Erreur lors de la vérification des MAJ: {e}")
     
     def _show_update_notification(self, info):
-        """Affiche la notification de mise à jour"""
-        msg = f"Une nouvelle version est disponible !\n\n"
-        msg += f"Version actuelle : v{info['current']}\n"
-        msg += f"Nouvelle version : v{info['latest']}\n\n"
-        msg += "Voulez-vous ouvrir la page de téléchargement ?"
+        """Affiche la dialogue de mise à jour"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Mise à jour disponible")
+        center_window(dialog, 400, 250, self)
+        dialog.grab_set()
         
-        if messagebox.askyesno("Mise à jour disponible", msg, icon='info'):
-            self.updater.open_release_page()
+        # Info
+        ctk.CTkLabel(dialog, text="Une nouvelle version est disponible !", 
+                     font=("Arial", 16, "bold"), text_color="#4CAF50").pack(pady=(20, 10))
+        
+        ctk.CTkLabel(dialog, text=f"Version actuelle : v{info['current']}", text_color="gray").pack()
+        ctk.CTkLabel(dialog, text=f"Nouvelle version : v{info['latest']}", font=("Arial", 14)).pack(pady=5)
+        
+        status_label = ctk.CTkLabel(dialog, text="Voulez-vous l'installer maintenant ?", text_color="gray")
+        status_label.pack(pady=10)
+        
+        progress_bar = ctk.CTkProgressBar(dialog, width=300)
+        progress_bar.set(0)
+        
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=20)
+        
+        def start_update():
+            btn_install.configure(state="disabled")
+            btn_ignore.configure(state="disabled")
+            progress_bar.pack(pady=5) # Afficher la barre
+            status_label.configure(text="Téléchargement en cours...")
+            
+            def update_progress(percent):
+                progress_bar.set(percent / 100)
+                status_label.configure(text=f"Téléchargement... {percent}%")
+                
+            def run_download():
+                success = self.updater.download_update(progress_callback=update_progress)
+                if success:
+                    self.after(0, lambda: status_label.configure(text="Lancement de l'installation..."))
+                    self.after(1000, lambda: self.updater.start_installer())
+                else:
+                    self.after(0, lambda: [
+                        status_label.configure(text="Erreur de téléchargement."),
+                        btn_install.configure(state="normal"),
+                        btn_ignore.configure(state="normal")
+                    ])
+
+            threading.Thread(target=run_download, daemon=True).start()
+
+        btn_install = ctk.CTkButton(btn_frame, text="Installer maintenant", fg_color="#4CAF50", hover_color="#388E3C", command=start_update)
+        btn_install.pack(side="left", padx=10)
+        
+        btn_ignore = ctk.CTkButton(btn_frame, text="Ignorer", fg_color="transparent", border_width=1, command=dialog.destroy)
+        btn_ignore.pack(side="left", padx=10)
 
 if __name__ == "__main__":
     app = SoundBoardApp()

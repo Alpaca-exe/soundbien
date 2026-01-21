@@ -2,6 +2,8 @@ import requests
 import webbrowser
 import os
 import sys
+import subprocess
+import tempfile
 from packaging import version
 
 # Get version from __init__.py
@@ -20,6 +22,7 @@ class Updater:
         self.latest_version = None
         self.download_url = None
         self.release_url = None
+        self.temp_installer_path = None
     
     def check_for_updates(self):
         """
@@ -49,6 +52,54 @@ class Updater:
             print(f"Erreur lors de la vérification des mises à jour: {e}")
             return False
     
+    def download_update(self, progress_callback=None):
+        """
+        Télécharge la mise à jour (fichier .exe).
+        progress_callback(percentage): Fonction appelée avec le % de progression (0-100)
+        """
+        if not self.download_url:
+            return False
+
+        try:
+            response = requests.get(self.download_url, stream=True)
+            response.raise_for_status()
+            total_length = response.headers.get('content-length')
+
+            # Créer un fichier temporaire pour l'installateur
+            fd, self.temp_installer_path = tempfile.mkstemp(suffix='.exe')
+            os.close(fd)
+
+            with open(self.temp_installer_path, "wb") as f:
+                if total_length is None: # Pas de content-length
+                    f.write(response.content)
+                    if progress_callback: progress_callback(100)
+                else:
+                    dl = 0
+                    total_length = int(total_length)
+                    for data in response.iter_content(chunk_size=4096):
+                        dl += len(data)
+                        f.write(data)
+                        done = int(100 * dl / total_length)
+                        if progress_callback:
+                            progress_callback(done)
+            return True
+        except Exception as e:
+            print(f"Erreur téléchargement MAJ: {e}")
+            return False
+
+    def start_installer(self):
+        """Lance l'installateur téléchargé et quitte l'application"""
+        if self.temp_installer_path and os.path.exists(self.temp_installer_path):
+            try:
+                # Lancer l'installateur
+                subprocess.Popen([self.temp_installer_path])
+                # Quitter l'application actuelle pour permettre l'écrasement des fichiers
+                sys.exit(0)
+            except Exception as e:
+                print(f"Erreur lancement installateur: {e}")
+                return False
+        return False
+
     def open_release_page(self):
         """Ouvre la page de la release dans le navigateur"""
         if self.release_url:
