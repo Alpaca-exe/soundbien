@@ -1,9 +1,0 @@
-{
-    "sounds": {
-        "shambala": "sounds\\shambala.mp3",
-        "quentin1": "sounds\\quentin1.mp3",
-        "quentin le caca...": "sounds\\quentin_le_caca....mp3"
-    },
-    "device_id": 6,
-    "monitoring": false
-}

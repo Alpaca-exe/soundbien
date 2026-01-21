@@ -1,13 +1,22 @@
-import customtkinter
+from PyInstaller.utils.hooks import collect_all
 import os
 
+# Bundling customtkinter correctly without importing it in spec
+datas = []
+binaries = []
+hiddenimports = ['keyboard']
+
+tmp_ret = collect_all('customtkinter')
+datas += tmp_ret[0]
+binaries += tmp_ret[1]
+hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['src\\main.py'],
     pathex=['src'],
-    binaries=[],
-    datas=[(os.path.dirname(customtkinter.__file__), 'customtkinter')],
-    hiddenimports=['keyboard'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
