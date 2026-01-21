@@ -59,13 +59,13 @@ jobs:
         
         $md = ""
         if ($features.Count -gt 0) {
-            $md += "## ✨ Features`n" + ($features -join "`n") + "`n`n"
+            $md += "## Features`n" + ($features -join "`n") + "`n`n"
         }
         if ($fixes.Count -gt 0) {
-            $md += "## 🐛 Bug Fixes`n" + ($fixes -join "`n") + "`n`n"
+            $md += "## Bug Fixes`n" + ($fixes -join "`n") + "`n`n"
         }
         if ($others.Count -gt 0) {
-            $md += "## 🔧 Autres changements`n" + ($others -join "`n") + "`n"
+            $md += "## Autres changements`n" + ($others -join "`n") + "`n"
         }
         
         $md | Out-File -FilePath RELEASE_NOTES.md -Encoding utf8
