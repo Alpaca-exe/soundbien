@@ -46,7 +46,7 @@ jobs:
             $parts = $line -split "\|", 2
             $hash = $parts[0]
             $msg = $parts[1]
-            $link = "[`$hash`](https://github.com/${{ github.repository }}/commit/$hash)"
+            $link = "[``$hash``](https://github.com/${{ github.repository }}/commit/$hash)"
             
             if ($msg -match "^feat:|^feat\(") {
                 $features += "- $link $msg"
