@@ -4,6 +4,7 @@ import os
 import sys
 import subprocess
 import tempfile
+import json
 from packaging import version
 
 # Get version from __init__.py
@@ -17,12 +18,19 @@ class Updater:
     GITHUB_REPO = "Alpaca-exe/soundbien"
     GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     
-    def __init__(self):
+    def __init__(self, config_dir=None):
         self.current_version = __version__
         self.latest_version = None
         self.download_url = None
         self.release_url = None
+        self.release_notes = None
         self.temp_installer_path = None
+        
+        # Fichier pour stocker la dernière version vue
+        if config_dir:
+            self.version_file = os.path.join(config_dir, ".last_version")
+        else:
+            self.version_file = None
     
     def check_for_updates(self):
         """
@@ -36,6 +44,7 @@ class Updater:
             data = response.json()
             self.latest_version = data['tag_name'].lstrip('v')
             self.release_url = data['html_url']
+            self.release_notes = data.get('body', '')
             
             # Trouver l'installateur dans les assets
             for asset in data.get('assets', []):
@@ -51,6 +60,71 @@ class Updater:
         except Exception as e:
             print(f"Erreur lors de la vérification des mises à jour: {e}")
             return False
+    
+    def was_just_updated(self):
+        """
+        Vérifie si l'application vient d'être mise à jour.
+        Compare la version actuelle avec la dernière version vue.
+        Retourne True si c'est une nouvelle version, False sinon.
+        """
+        if not self.version_file:
+            return False
+            
+        try:
+            if os.path.exists(self.version_file):
+                with open(self.version_file, 'r') as f:
+                    last_seen_version = f.read().strip()
+                
+                # Si version différente, c'est une mise à jour
+                if last_seen_version != self.current_version:
+                    return True
+            else:
+                # Premier lancement - pas de popup
+                self._save_current_version()
+                return False
+                
+        except Exception as e:
+            print(f"Erreur vérification mise à jour récente: {e}")
+        
+        return False
+    
+    def _save_current_version(self):
+        """Sauvegarde la version actuelle comme dernière vue"""
+        if self.version_file:
+            try:
+                with open(self.version_file, 'w') as f:
+                    f.write(self.current_version)
+            except Exception as e:
+                print(f"Erreur sauvegarde version: {e}")
+    
+    def mark_version_seen(self):
+        """Marque la version actuelle comme vue (appelé après affichage du changelog)"""
+        self._save_current_version()
+    
+    def get_changelog_for_version(self, target_version=None):
+        """
+        Récupère le changelog pour une version spécifique depuis GitHub.
+        Si target_version est None, utilise la version actuelle.
+        """
+        target = target_version or self.current_version
+        
+        try:
+            # Récupérer la release correspondante
+            url = f"https://api.github.com/repos/{self.GITHUB_REPO}/releases/tags/v{target}"
+            response = requests.get(url, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    'version': target,
+                    'name': data.get('name', f'Version {target}'),
+                    'body': data.get('body', 'Aucune note de version disponible.'),
+                    'published_at': data.get('published_at', '')
+                }
+        except Exception as e:
+            print(f"Erreur récupération changelog: {e}")
+        
+        return None
     
     def download_update(self, progress_callback=None):
         """

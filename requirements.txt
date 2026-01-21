@@ -9,3 +9,6 @@ requests
 packaging
 pydub
 keyboard
+miniaudio
+pystray
+pillow

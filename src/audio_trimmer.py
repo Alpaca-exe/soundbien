@@ -9,6 +9,8 @@ import threading
 import time
 
 import uuid
+import subprocess
+import shutil
 
 # Essayer d'importer depuis le même dossier ou via src
 try:
@@ -435,23 +437,27 @@ class AudioTrimDialog(ctk.CTkToplevel):
             
         self.playing = True
         self.stop_playback.clear()
-        self.playback_start_ms = start_ms  # Sauvegarder la position de départ
+        self.playback_start_ms = start_ms
         self.btn_play.configure(text="⬛  Stop (Espace)", fg_color="#d13438", hover_color="#a02a2e")
         
         def run():
             try:
                 segment = self.audio[start_ms:end_ms] if end_ms else self.audio[start_ms:]
                 
-                # Exporter temp avec nom unique pour éviter conflits
-                temp_path = self.audio_path.parent / f"temp_play_{uuid.uuid4().hex[:8]}.wav"
-                segment.export(str(temp_path), format="wav")
+                # OPTIMISATION: Extraire directement les samples numpy (pas d'export fichier)
+                samples = np.array(segment.get_array_of_samples(), dtype=np.float32)
+                samples = samples / 32768.0  # Normaliser int16 -> float32
                 
-                data, fs = sf.read(str(temp_path))
+                # Reshape pour stéréo si nécessaire
+                if segment.channels == 2:
+                    samples = samples.reshape((-1, 2))
                 
-                start_time = time.time()
+                fs = segment.frame_rate
                 total_duration = len(segment) / 1000.0
                 
-                sd.play(data, fs)
+                # Jouer directement avec sounddevice
+                sd.play(samples, fs)
+                start_time = time.time()
                 
                 while self.playing and (time.time() - start_time) < total_duration:
                     if self.stop_playback.is_set():
@@ -459,18 +465,14 @@ class AudioTrimDialog(ctk.CTkToplevel):
                         self.playing = False
                         break
                     
-                    # Update curseur avec protection contre fenêtre fermée
                     try:
                         current_pos_ms = start_ms + (time.time() - start_time) * 1000
-                        # Vérifier que la fenêtre existe toujours
                         if self.winfo_exists():
-                            # OPTIMISATION: Vérifier self.playing pour ne pas écraser le reset du curseur si stop a été cliqué
                             self.after_idle(lambda ms=current_pos_ms: self.timeline.set_playhead(ms) if self.playing and self.timeline.winfo_exists() else None)
                     except:
-                        # Fenêtre fermée, arrêter
                         break
                     
-                    time.sleep(0.03) # ~30fps update
+                    time.sleep(0.03)
                 
                 self.playing = False
                 
@@ -479,12 +481,6 @@ class AudioTrimDialog(ctk.CTkToplevel):
                         self.after_idle(lambda: self.btn_play.configure(text="▶ Lire (Espace)", fg_color=["#3B8ED0", "#1F6AA5"], hover_color=["#36719F", "#144870"]))
                 except:
                     pass
-                
-                # Si lecture finie naturellement (pas stoppée), on ne fait rien de spécial
-                if not self.stop_playback.is_set():
-                    pass
-                    
-                temp_path.unlink(missing_ok=True)
                 
             except Exception as e:
                 print(f"Erreur lecture: {e}")
@@ -510,16 +506,96 @@ class AudioTrimDialog(ctk.CTkToplevel):
         self.timeline.set_playhead(self.playback_start_ms)
 
     def save_trimmed(self):
+        """Sauvegarde le segment trimmé dans un thread séparé pour ne pas bloquer l'UI"""
+        # Désactiver le bouton et afficher un indicateur de progression
+        self.btn_save.configure(state="disabled", text="⏳ Sauvegarde...")
+        self.btn_cancel.configure(state="disabled")
+        
+        start, end = self.timeline.get_selection()
+        
+        def save_thread():
+            try:
+                # Essayer FFmpeg stream copy d'abord (beaucoup plus rapide)
+                if self._try_ffmpeg_trim(start, end):
+                    self.after(0, self._on_save_complete)
+                else:
+                    # Fallback sur pydub si FFmpeg échoue
+                    segment = self.audio[start:end]
+                    segment.export(str(self.audio_path), format=self.audio_path.suffix[1:])
+                    self.after(0, self._on_save_complete)
+                
+            except Exception as e:
+                self.after(0, lambda: self._on_save_error(str(e)))
+        
+        threading.Thread(target=save_thread, daemon=True).start()
+    
+    def _try_ffmpeg_trim(self, start_ms, end_ms):
+        """
+        Utilise FFmpeg avec stream copy pour couper l'audio sans ré-encoder.
+        Retourne True si succès, False sinon.
+        """
         try:
-            start, end = self.timeline.get_selection()
+            # Vérifier que ffmpeg est disponible
+            ffmpeg_path = shutil.which('ffmpeg')
+            if not ffmpeg_path:
+                return False
             
-            segment = self.audio[start:end]
-            segment.export(str(self.audio_path), format=self.audio_path.suffix[1:])
+            # Créer un fichier temporaire pour la sortie
+            temp_output = self.audio_path.parent / f"temp_trim_{uuid.uuid4().hex[:8]}{self.audio_path.suffix}"
             
-            if self.callback:
-                self.callback(str(self.audio_path))
+            start_sec = start_ms / 1000
+            duration_sec = (end_ms - start_ms) / 1000
             
-            self.destroy()
+            # Déterminer le codec en fonction de l'extension
+            ext = self.audio_path.suffix.lower()
+            if ext == '.mp3':
+                codec_args = ['-c:a', 'libmp3lame', '-q:a', '2']  # Qualité VBR haute
+            elif ext == '.wav':
+                codec_args = ['-c:a', 'pcm_s16le']
+            elif ext in ['.ogg', '.opus']:
+                codec_args = ['-c:a', 'libopus', '-b:a', '192k']
+            elif ext == '.flac':
+                codec_args = ['-c:a', 'flac']
+            elif ext == '.aac' or ext == '.m4a':
+                codec_args = ['-c:a', 'aac', '-b:a', '192k']
+            else:
+                codec_args = ['-c:a', 'libmp3lame', '-q:a', '2']  # Fallback MP3
+            
+            cmd = [
+                ffmpeg_path, '-y',
+                '-ss', f'{start_sec:.3f}',
+                '-i', str(self.audio_path),
+                '-t', f'{duration_sec:.3f}',
+                *codec_args,                      # Ré-encoder pour coupe propre
+                '-af', 'afade=t=in:st=0:d=0.01',  # Fade-in 10ms pour éviter pop
+                str(temp_output)
+            ]
+            
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            
+            # Remplacer le fichier original par le fichier trimmé
+            temp_output.replace(self.audio_path)
+            return True
             
         except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de sauvegarder:\n{e}")
+            # Nettoyer le fichier temporaire en cas d'erreur
+            if 'temp_output' in locals() and temp_output.exists():
+                temp_output.unlink(missing_ok=True)
+            return False
+    
+    def _on_save_complete(self):
+        """Appelé quand la sauvegarde est terminée avec succès"""
+        if self.callback:
+            self.callback(str(self.audio_path))
+        self.destroy()
+    
+    def _on_save_error(self, error_msg):
+        """Appelé en cas d'erreur de sauvegarde"""
+        self.btn_save.configure(state="normal", text="✓ SAUVEGARDER")
+        self.btn_cancel.configure(state="normal")
+        messagebox.showerror("Erreur", f"Impossible de sauvegarder:\n{error_msg}")

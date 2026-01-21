@@ -48,6 +48,3 @@ class Downloader:
         except Exception as e:
             print(f"Erreur lors du téléchargement : {e}")
             return (None, None)
-        except Exception as e:
-            print(f"Erreur lors du téléchargement : {e}")
-            return None

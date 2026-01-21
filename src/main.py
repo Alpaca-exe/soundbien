@@ -26,6 +26,14 @@ from tkinter import messagebox, StringVar, filedialog, simpledialog
 from pathlib import Path
 import shutil
 
+# System tray
+try:
+    import pystray
+    from PIL import Image
+    TRAY_AVAILABLE = True
+except ImportError:
+    TRAY_AVAILABLE = False
+
 # Ensure we can import modules from the same directory
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -117,7 +125,11 @@ class SoundBoardApp(ctk.CTk):
         self.tts_generator = TTSGenerator(output_dir=str(sounds_dir))
         
         # Vérifier les mises à jour en arrière-plan
-        self.updater = Updater()
+        self.updater = Updater(config_dir=str(self.app_data_dir))
+        
+        # Vérifier si on vient de faire une mise à jour (afficher changelog)
+        if self.updater.was_just_updated():
+            self.after(500, self._show_changelog_dialog)
         
         # Uniquement en version EXE pour éviter rate limit GitHub en dev
         if getattr(sys, 'frozen', False):
@@ -192,18 +204,6 @@ class SoundBoardApp(ctk.CTk):
         self.btn_tts_play = ctk.CTkButton(self.footer_frame, text="▶ Jouer Direct", fg_color="green", hover_color="darkgreen", command=self.on_tts_play_direct)
         self.btn_tts_play.pack(side="left", padx=5)
 
-        # --- Footer (TTS Generator) ---
-        self.footer_frame = ctk.CTkFrame(self)
-        self.footer_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
-
-        self.lbl_tts = ctk.CTkLabel(self.footer_frame, text="TTS Rapide :", font=("Arial", 12, "bold"))
-        self.lbl_tts.pack(side="left", padx=10)
-
-        self.entry_tts_text = ctk.CTkEntry(self.footer_frame, placeholder_text="Texte à dire...", width=300)
-        self.entry_tts_text.pack(side="left", padx=5)
-
-        self.btn_tts_play = ctk.CTkButton(self.footer_frame, text="▶ Jouer Direct", fg_color="green", hover_color="darkgreen", command=self.on_tts_play_direct)
-        self.btn_tts_play.pack(side="left", padx=5)
 
         # Volume Controls (Custom sliders sans bug)
         from volume_slider import VolumeSlider
@@ -227,14 +227,90 @@ class SoundBoardApp(ctk.CTk):
                                            callback=self.on_vol_mon_change)
         self.slider_vol_mon.grid(row=1, column=1, padx=5)
 
-        self.slider_vol_mon = VolumeSlider(self.vol_frame,
-                                           initial_value=self.sound_manager.vol_monitoring,
-                                           callback=self.on_vol_mon_change)
-        self.slider_vol_mon.grid(row=1, column=1, padx=5)
 
         # Note: on n'utilise plus self.bind('<KeyPress>') car le SoundManager
         # gère tout via keyboard.hook pour le global hotkey 
+        
+        # System Tray
+        self.tray_icon = None
+        if TRAY_AVAILABLE:
+            self._setup_tray_icon()
+            # Intercepter fermeture et minimisation
+            self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
+            self.bind("<Unmap>", self._on_minimize)
 
+    def _setup_tray_icon(self):
+        """Configure l'icône de la barre d'état système"""
+        # Charger l'icône
+        icon_path = Path(__file__).parent.parent / "assets" / "icon.png"
+        if not icon_path.exists():
+            icon_path = Path(__file__).parent.parent / "assets" / "icon.ico"
+        
+        if icon_path.exists():
+            image = Image.open(icon_path)
+        else:
+            # Créer une icône par défaut si pas trouvée
+            image = Image.new('RGB', (64, 64), color='#2b825b')
+        
+        # Menu du tray
+        menu = pystray.Menu(
+            pystray.MenuItem("Afficher Soundbien", self._show_window, default=True),
+            pystray.MenuItem("Vérifier mises à jour", self._check_updates_from_tray),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quitter", self._quit_app)
+        )
+        
+        self.tray_icon = pystray.Icon("Soundbien", image, "Soundbien", menu)
+        
+        # Démarrer le tray dans un thread séparé
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+    
+    def _hide_to_tray(self):
+        """Cache la fenêtre dans la barre d'état système"""
+        self.withdraw()
+    
+    def _on_minimize(self, event=None):
+        """Appelé quand la fenêtre est minimisée"""
+        # Vérifier que c'est bien une minimisation (pas juste un focus perdu)
+        if self.state() == 'iconic':
+            self._hide_to_tray()
+    
+    def _show_window(self, icon=None, item=None):
+        """Restaure la fenêtre depuis le tray"""
+        self.after(0, self._restore_window)
+    
+    def _restore_window(self):
+        """Restaure et met au premier plan"""
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+    
+    def _quit_app(self, icon=None, item=None):
+        """Quitte complètement l'application"""
+        # Arrêter le tray proprement
+        if self.tray_icon:
+            self.tray_icon.stop()
+        
+        # Quitter proprement en évitant les callbacks Tkinter pendants
+        try:
+            self.quit()  # Arrête mainloop
+        except:
+            pass
+        
+        # Forcer la sortie
+        import os
+        os._exit(0)
+
+    def _check_updates_from_tray(self, icon=None, item=None):
+        """Vérifie les mises à jour depuis le menu tray"""
+        def check():
+            if self.updater.check_for_updates():
+                info = self.updater.get_update_info()
+                self.after(0, lambda: [self._show_window(), self._show_update_notification(info)])
+            else:
+                self.after(0, lambda: messagebox.showinfo("Mises à jour", f"Vous utilisez la dernière version (v{self.updater.current_version})"))
+        
+        threading.Thread(target=check, daemon=True).start()
 
     def _load_devices_async(self):
         """Charge les périphériques en background"""
@@ -338,8 +414,6 @@ class SoundBoardApp(ctk.CTk):
     def on_vol_mon_change(self, value):
         self.sound_manager.set_volume_monitoring(value)
 
-    def on_vol_mon_change(self, value):
-        self.sound_manager.set_volume_monitoring(value)
 
     # Note: on_key_press supprimé car géré globablement par SoundManager
 
@@ -598,6 +672,60 @@ class SoundBoardApp(ctk.CTk):
         
         btn_ignore = ctk.CTkButton(btn_frame, text="Ignorer", fg_color="transparent", border_width=1, command=dialog.destroy)
         btn_ignore.pack(side="left", padx=10)
+
+    def _show_changelog_dialog(self):
+        """Affiche le changelog après une mise à jour"""
+        # Récupérer le changelog en background
+        def fetch_and_show():
+            changelog = self.updater.get_changelog_for_version()
+            if changelog:
+                self.after(0, lambda: self._display_changelog(changelog))
+            else:
+                # Pas de changelog trouvé, marquer comme vu quand même
+                self.updater.mark_version_seen()
+        
+        threading.Thread(target=fetch_and_show, daemon=True).start()
+    
+    def _display_changelog(self, changelog):
+        """Affiche la fenêtre de changelog"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Quoi de neuf ? - v{changelog['version']}")
+        center_window(dialog, 500, 400, self)
+        dialog.grab_set()
+        
+        # Header
+        header_frame = ctk.CTkFrame(dialog, fg_color="#2b825b", corner_radius=0)
+        header_frame.pack(fill="x")
+        
+        ctk.CTkLabel(header_frame, text="🎉 Mise à jour installée !", 
+                     font=("Arial", 18, "bold"), text_color="white").pack(pady=10)
+        ctk.CTkLabel(header_frame, text=f"Version {changelog['version']}", 
+                     font=("Arial", 12), text_color="#ccffcc").pack(pady=(0, 10))
+        
+        # Changelog content (scrollable)
+        content_frame = ctk.CTkScrollableFrame(dialog, label_text="Notes de version")
+        content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        # Formater le changelog (markdown simplifié)
+        changelog_text = changelog['body'] or "Aucune note de version disponible."
+        
+        # Afficher le texte ligne par ligne pour un meilleur rendu
+        ctk.CTkLabel(content_frame, text=changelog_text, 
+                     font=("Consolas", 11), justify="left", 
+                     wraplength=440, anchor="w").pack(anchor="w", pady=5)
+        
+        # Bouton fermer
+        def on_close():
+            self.updater.mark_version_seen()
+            dialog.destroy()
+        
+        btn_close = ctk.CTkButton(dialog, text="C'est noté !", 
+                                  fg_color="#2b825b", hover_color="#1f5d42",
+                                  command=on_close, height=40)
+        btn_close.pack(pady=15)
+        
+        # Fermer avec Escape
+        dialog.bind("<Escape>", lambda e: on_close())
 
 if __name__ == "__main__":
     app = SoundBoardApp()

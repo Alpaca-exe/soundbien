@@ -3,8 +3,6 @@ import json
 import os
 import keyboard
 
-# Constantes
-MAX_CACHE_SIZE = 50  # Limite du cache audio pour éviter surconsommation mémoire
 
 class SoundManager:
     def __init__(self, config_file="config.json"):
@@ -17,8 +15,7 @@ class SoundManager:
         self.vol_output = 1.0
         self.vol_monitoring = 1.0
         
-        # Optimisation
-        self.audio_cache = {} # path -> (data, fs)
+        # Playback state
         self.current_play_id = 0
         self.lock = threading.Lock()
         self.fade_out = False  # Flag pour fade out progressif
@@ -128,12 +125,8 @@ class SoundManager:
         self.save_config()
 
     def remove_sound(self, name):
-        """Supprime un son de la bibliothèque et du cache"""
+        """Supprime un son de la bibliothèque"""
         if name in self.sounds:
-            # Nettoyer le cache
-            path = self.sounds[name]
-            if path in self.audio_cache:
-                del self.audio_cache[path]
             # Nettoyer le keybind si existant
             for key, sound_name in list(self.keybinds.items()):
                 if sound_name == name:
@@ -170,13 +163,6 @@ class SoundManager:
         self.stop_key = key
         self.save_config()
     
-    def _cleanup_cache(self):
-        """Nettoie le cache si trop volumineux (FIFO)"""
-        if len(self.audio_cache) > MAX_CACHE_SIZE:
-            # Supprimer les entrées les plus anciennes
-            oldest_keys = list(self.audio_cache.keys())[:len(self.audio_cache) - MAX_CACHE_SIZE]
-            for key in oldest_keys:
-                del self.audio_cache[key]
 
     def play_sound(self, name):
         if name not in self.sounds:
@@ -209,30 +195,40 @@ class SoundManager:
         self.save_config()
 
     def _play_thread(self, path, play_id):
-        """Thread de lecture audio avec gestion du volume et fade-out"""
-        # Réinitialiser le flag fade pour ce nouveau thread
+        """Thread de lecture audio avec miniaudio streaming (ultra-rapide, RAM minimale)"""
         self.fade_out = False
         
         try:
+            import miniaudio
             import sounddevice as sd
-            import soundfile as sf
             import numpy as np
             
-            # 1. Vérifier le cache ou charger
-            if path in self.audio_cache:
-                data, fs = self.audio_cache[path]
-            else:
-                data, fs = sf.read(path, dtype='float32')
-                self.audio_cache[path] = (data, fs)
-                # Nettoyer le cache si trop volumineux
-                self._cleanup_cache()
+            # Décoder le fichier avec miniaudio (beaucoup plus rapide que pydub/soundfile)
+            decoded = miniaudio.decode_file(path)
+            samples = np.frombuffer(decoded.samples, dtype=np.int16).astype(np.float32) / 32768.0
+            
+            # Copie contiguë pour éviter les artefacts de buffer
+            samples = np.ascontiguousarray(samples)
+            
+            # Reshape pour multi-canaux
+            if decoded.nchannels > 1:
+                samples = samples.reshape((-1, decoded.nchannels))
+            
+            # Fade-in de 10ms pour éliminer le "pop" au démarrage
+            fade_in_samples = min(int(decoded.sample_rate * 0.01), len(samples))
+            fade_in_curve = np.linspace(0, 1, fade_in_samples).astype(np.float32)
+            if decoded.nchannels > 1:
+                fade_in_curve = fade_in_curve.reshape(-1, 1)
+            samples[:fade_in_samples] *= fade_in_curve
+            
+            fs = decoded.sample_rate
+            channels = decoded.nchannels
             
             # Périphérique principal (ex: Cable)
             device_out = self.current_device if self.current_device is not None else sd.default.device[1]
             # Périphérique de monitoring (ex: Casque)
             device_mon = sd.default.device[1]
             
-            # Liste des streams actifs
             streams = []
             main_stream = None
             mon_stream = None
@@ -240,7 +236,6 @@ class SoundManager:
             try:
                 # Création des streams
                 try:
-                    channels = data.shape[1] if len(data.shape) > 1 else 1
                     main_stream = sd.OutputStream(samplerate=fs, device=device_out, channels=channels)
                     main_stream.start()
                     streams.append(main_stream)
@@ -261,23 +256,21 @@ class SoundManager:
                 
                 # Boucle de lecture optimisée
                 fade_factor = 1.0
-                while position < len(data):
+                while position < len(samples):
                     # Check rapide si on doit arrêter (spam ou stop button)
                     stopping = self.stop_event.is_set() or self.current_play_id != play_id
                     
                     if stopping:
                         if self.fade_out:
-                            fade_factor = max(0, fade_factor - 0.10) # Un peu plus doux pour éviter le POP
+                            fade_factor = max(0, fade_factor - 0.10)
                         else:
                             fade_factor = 0
                         
-                    end = min(position + block_size, len(data))
-                    chunk = data[position:end]
+                    end = min(position + block_size, len(samples))
+                    chunk = samples[position:end]
                     
                     # Écriture Main
                     if main_stream:
-                        # Appliquer volume sortie + fade si actif
-                        # On écrit MÊME si fade_factor est 0 pour nettoyer le buffer
                         main_stream.write(chunk * self.vol_output * fade_factor)
                     
                     # Écriture Monitoring
@@ -289,7 +282,6 @@ class SoundManager:
                             
                     # Si on est en arrêt et qu'on a atteint le silence, on coupe
                     if stopping and fade_factor == 0:
-                        # Petite pause pour laisser le buffer se vider
                         sd.sleep(10)
                         break
                     
